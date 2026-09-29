@@ -17,9 +17,16 @@ Base = declarative_base()
 
 def create_tables():
     from app.models.product import ProductDB
+    from app.models.purchase_receipt import PurchaseReceiptDB
+    from app.models.shop_finance import ShopFinanceDB
+    from app.models.sale import SaleDB
+    from app.models.purchase import PurchaseDB
+    from app.models.expense import ExpenseDB
+    from app.models.customer import CustomerDB
+    from app.models.credit import CreditDB
+    from app.models.credit_payment import CreditPaymentDB
 
     Base.metadata.create_all(bind=engine)
-
 
 def get_db():
     db = SessionLocal()

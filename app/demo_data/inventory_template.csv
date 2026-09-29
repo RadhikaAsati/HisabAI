@@ -1,0 +1,5 @@
+product_id,name,current_stock,average_daily_sales,purchase_price,supplier_lead_time_days
+101,Milk,45,10,50,1
+102,Bread,15,5,40,1
+103,Biscuits,40,4,30,2
+104,Maggi,60,5,15,2

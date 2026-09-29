@@ -12,3 +12,9 @@ def test_database_connection():
         database_name = result.scalar()
 
         assert database_name == "hisabai"
+
+
+def create_tables():
+    from app.models.product import ProductDB
+
+    Base.metadata.create_all(bind=engine)
