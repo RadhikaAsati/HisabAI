@@ -49,19 +49,22 @@ def get_cashflow(db: Session = Depends(get_db)):
         .scalar()
     )
 
-    # 5. Total purchase spending
-    total_purchases = (
+    # 5. Total PAID purchase spending
+    total_paid_purchases = (
         db.query(
             func.coalesce(func.sum(PurchaseDB.total_amount), 0)
         )
+        .filter(PurchaseDB.payment_status == "PAID")
         .scalar()
-    )
+)
+
 
     # 6. Total expenses
     total_expenses = (
         db.query(
             func.coalesce(func.sum(ExpenseDB.amount), 0)
         )
+        
         .scalar()
     )
 
@@ -73,7 +76,7 @@ def get_cashflow(db: Session = Depends(get_db)):
 
     # 8. Calculate total recorded outflow
     total_cash_outflow = (
-        float(total_purchases)
+        float(total_paid_purchases)
         + float(total_expenses)
     )
 
@@ -88,7 +91,7 @@ def get_cashflow(db: Session = Depends(get_db)):
         "credit_sales_revenue": float(credit_sales),
         "customer_payments_received": float(total_credit_payments),
         "total_cash_inflow": total_cash_inflow,
-        "total_purchase_spending": float(total_purchases),
+        "total_purchase_spending": float(total_paid_purchases),
         "total_expenses": float(total_expenses),
         "total_cash_outflow": total_cash_outflow,
         "net_cash_flow": net_cash_flow,
