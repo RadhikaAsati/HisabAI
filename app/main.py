@@ -24,6 +24,7 @@ from app.models.credit_payment import CreditPaymentDB
 from app.api.routes import dashboard
 from app.api.routes import cashflow
 from app.api.routes import auth
+from app.api.routes import billing
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -94,6 +95,7 @@ app.include_router(credit_payments.router)
 app.include_router(dashboard.router)
 app.include_router(cashflow.router)
 app.include_router(auth.router)
+app.include_router(billing.router)
 
 @app.get("/")
 def root():
