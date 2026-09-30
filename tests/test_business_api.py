@@ -47,6 +47,7 @@ def test_create_sale_and_reduce_stock():
 
     response = client.post(
         "/sales/",
+        headers=headers,
         json={
             "product_id": product_id,
             "quantity": 1,
@@ -92,6 +93,7 @@ def test_sale_fails_when_stock_is_insufficient():
 
     response = client.post(
         "/sales/",
+        headers=headers,
         json={
             "product_id": product["product_id"],
             "quantity": product["current_stock"] + 100000,
@@ -882,3 +884,159 @@ def test_credit_payments_are_isolated_by_shop():
     }
 
     assert payment_id not in radhika_payment_ids
+
+# -----------------------------------
+# Sales shop isolation tests
+# -----------------------------------
+
+def test_sales_are_isolated_by_shop():
+    # Login as Radhika
+    radhika_response = client.post(
+        "/auth/login",
+        json={
+            "email": "radhika.demo@example.com",
+            "password": "Radhika@123",
+        },
+    )
+
+    assert radhika_response.status_code == 200
+
+    radhika_headers = {
+        "Authorization": f"Bearer {radhika_response.json()['access_token']}"
+    }
+
+    # Login as Aarya
+    aarya_response = client.post(
+        "/auth/login",
+        json={
+            "email": "aarya.demo@example.com",
+            "password": "Aarya@123",
+        },
+    )
+
+    assert aarya_response.status_code == 200
+
+    aarya_headers = {
+        "Authorization": f"Bearer {aarya_response.json()['access_token']}"
+    }
+
+    # Get Aarya's products
+    aarya_products_response = client.get(
+        "/products/",
+        headers=aarya_headers,
+    )
+
+    assert aarya_products_response.status_code == 200
+
+    aarya_products = aarya_products_response.json()
+    assert len(aarya_products) > 0
+
+    aarya_product = aarya_products[0]
+
+    # Record a sale in Aarya's shop
+    sale_response = client.post(
+        "/sales/",
+        headers=aarya_headers,
+        json={
+            "product_id": aarya_product["product_id"],
+            "quantity": 1,
+            "unit_selling_price": 100,
+            "payment_mode": "CASH",
+        },
+    )
+
+    assert sale_response.status_code == 200
+
+    aarya_sale = sale_response.json()
+    aarya_sale_id = aarya_sale["sale_id"]
+
+    # Aarya should see her sale
+    aarya_sales_response = client.get(
+        "/sales/",
+        headers=aarya_headers,
+    )
+
+    assert aarya_sales_response.status_code == 200
+
+    aarya_sale_ids = {
+        sale["sale_id"]
+        for sale in aarya_sales_response.json()
+    }
+
+    assert aarya_sale_id in aarya_sale_ids
+
+    # Radhika should NOT see Aarya's sale
+    radhika_sales_response = client.get(
+        "/sales/",
+        headers=radhika_headers,
+    )
+
+    assert radhika_sales_response.status_code == 200
+
+    radhika_sale_ids = {
+        sale["sale_id"]
+        for sale in radhika_sales_response.json()
+    }
+
+    assert aarya_sale_id not in radhika_sale_ids
+
+
+def test_sale_cannot_be_recorded_using_another_shops_product():
+    # Login as Radhika
+    radhika_response = client.post(
+        "/auth/login",
+        json={
+            "email": "radhika.demo@example.com",
+            "password": "Radhika@123",
+        },
+    )
+
+    assert radhika_response.status_code == 200
+
+    radhika_headers = {
+        "Authorization": f"Bearer {radhika_response.json()['access_token']}"
+    }
+
+    # Login as Aarya
+    aarya_response = client.post(
+        "/auth/login",
+        json={
+            "email": "aarya.demo@example.com",
+            "password": "Aarya@123",
+        },
+    )
+
+    assert aarya_response.status_code == 200
+
+    aarya_headers = {
+        "Authorization": f"Bearer {aarya_response.json()['access_token']}"
+    }
+
+    # Get Aarya's products
+    aarya_products_response = client.get(
+        "/products/",
+        headers=aarya_headers,
+    )
+
+    assert aarya_products_response.status_code == 200
+
+    aarya_products = aarya_products_response.json()
+    assert len(aarya_products) > 0
+
+    aarya_product_id = aarya_products[0]["product_id"]
+
+    # Radhika attempts to record a sale using Aarya's product
+    unauthorized_sale_response = client.post(
+        "/sales/",
+        headers=radhika_headers,
+        json={
+            "product_id": aarya_product_id,
+            "quantity": 1,
+            "unit_selling_price": 100,
+            "payment_mode": "CASH",
+        },
+    )
+
+    # Product does not belong to Radhika's shop
+    assert unauthorized_sale_response.status_code == 404
+    assert unauthorized_sale_response.json()["detail"] == "Product not found."

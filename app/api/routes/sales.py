@@ -1,4 +1,3 @@
-
 from sqlalchemy import desc, func
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -6,7 +5,9 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.product import ProductDB
 from app.models.sale import SaleDB
+from app.models.shop import ShopDB
 from app.schemas.sales import SaleCreate, SaleResponse
+from app.api.dependencies import get_current_shop
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
 
@@ -17,12 +18,16 @@ router = APIRouter(prefix="/sales", tags=["Sales"])
 @router.post("/", response_model=SaleResponse)
 def record_sale(
     sale: SaleCreate,
+    current_shop: ShopDB = Depends(get_current_shop),
     db: Session = Depends(get_db),
 ):
-    # Step 1: Find the product
+    # Step 1: Find the product belonging to the current shop
     product = (
         db.query(ProductDB)
-        .filter(ProductDB.product_id == sale.product_id)
+        .filter(
+            ProductDB.product_id == sale.product_id,
+            ProductDB.shop_id == current_shop.shop_id,
+        )
         .with_for_update()
         .first()
     )
@@ -30,14 +35,14 @@ def record_sale(
     if product is None:
         raise HTTPException(
             status_code=404,
-            detail="Product not found."
+            detail="Product not found.",
         )
 
     # Step 2: Check stock availability
     if product.current_stock < sale.quantity:
         raise HTTPException(
             status_code=400,
-            detail=f"Insufficient stock. Available stock: {product.current_stock}"
+            detail=f"Insufficient stock. Available stock: {product.current_stock}",
         )
 
     # Step 3: Calculate total sale amount
@@ -65,7 +70,7 @@ def record_sale(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail="Sale could not be recorded."
+            detail="Sale could not be recorded.",
         )
 
     # Step 7: Return sale details
@@ -80,12 +85,22 @@ def record_sale(
 
 
 # -----------------------------------
-# GET /sales/ - Get all sales
+# GET /sales/ - Get current shop's sales
 # -----------------------------------
 @router.get("/", response_model=list[SaleResponse])
-def get_sales(db: Session = Depends(get_db)):
+def get_sales(
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
     sales = (
         db.query(SaleDB)
+        .join(
+            ProductDB,
+            SaleDB.product_id == ProductDB.product_id,
+        )
+        .filter(
+            ProductDB.shop_id == current_shop.shop_id,
+        )
         .order_by(desc(SaleDB.created_at))
         .all()
     )
@@ -104,15 +119,28 @@ def get_sales(db: Session = Depends(get_db)):
 
 
 # -----------------------------------
-# GET /sales/summary - Sales summary
+# GET /sales/summary - Current shop sales summary
 # -----------------------------------
 @router.get("/summary")
-def get_sales_summary(db: Session = Depends(get_db)):
+def get_sales_summary(
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
     # Calculate total revenue and quantity sold
-    totals = db.query(
-        func.sum(SaleDB.total_amount),
-        func.sum(SaleDB.quantity)
-    ).first()
+    totals = (
+        db.query(
+            func.sum(SaleDB.total_amount),
+            func.sum(SaleDB.quantity),
+        )
+        .join(
+            ProductDB,
+            SaleDB.product_id == ProductDB.product_id,
+        )
+        .filter(
+            ProductDB.shop_id == current_shop.shop_id,
+        )
+        .first()
+    )
 
     total_revenue = totals[0] or 0
     total_quantity = totals[1] or 0
@@ -123,15 +151,18 @@ def get_sales_summary(db: Session = Depends(get_db)):
             ProductDB.product_id,
             ProductDB.name,
             func.sum(SaleDB.quantity).label("quantity_sold"),
-            func.sum(SaleDB.total_amount).label("revenue")
+            func.sum(SaleDB.total_amount).label("revenue"),
         )
         .join(
             SaleDB,
-            ProductDB.product_id == SaleDB.product_id
+            ProductDB.product_id == SaleDB.product_id,
+        )
+        .filter(
+            ProductDB.shop_id == current_shop.shop_id,
         )
         .group_by(
             ProductDB.product_id,
-            ProductDB.name
+            ProductDB.name,
         )
         .all()
     )
@@ -144,8 +175,8 @@ def get_sales_summary(db: Session = Depends(get_db)):
                 "product_id": row.product_id,
                 "product_name": row.name,
                 "quantity_sold": row.quantity_sold,
-                "revenue": row.revenue
+                "revenue": row.revenue,
             }
             for row in product_sales
-        ]
+        ],
     }
