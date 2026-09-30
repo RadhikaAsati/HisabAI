@@ -1258,3 +1258,141 @@ def test_saved_purchase_plan_is_isolated_by_shop():
     # rather than another shop's financial data.
     assert shop_a_plan["spendable_cash"] <= 5000
     assert shop_b_plan["spendable_cash"] <= 2000
+
+def test_cash_billing_creates_multi_item_bill():
+    headers = get_auth_headers()
+
+    response = client.post(
+        "/billing/",
+        headers=headers,
+        json={
+            "payment_mode": "CASH",
+            "items": [
+                {
+                    "product_id": 101,
+                    "quantity": 1,
+                    "unit_selling_price": 50,
+                },
+                {
+                    "product_id": 102,
+                    "quantity": 1,
+                    "unit_selling_price": 40,
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    assert data["total_amount"] == 90
+    assert data["payment_mode"] == "CASH"
+    assert data["customer_id"] is None
+    assert data["credit_id"] is None
+    assert len(data["items"]) == 2
+
+
+def test_credit_billing_creates_credit_record():
+    headers = get_auth_headers()
+
+    response = client.post(
+        "/billing/",
+        headers=headers,
+        json={
+            "payment_mode": "CREDIT",
+            "customer_id": 1,
+            "items": [
+                {
+                    "product_id": 102,
+                    "quantity": 1,
+                    "unit_selling_price": 40,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    assert data["total_amount"] == 40
+    assert data["payment_mode"] == "CREDIT"
+    assert data["customer_id"] == 1
+    assert data["credit_id"] is not None
+
+
+def test_billing_rejects_duplicate_products():
+    headers = get_auth_headers()
+
+    response = client.post(
+        "/billing/",
+        headers=headers,
+        json={
+            "payment_mode": "CASH",
+            "items": [
+                {
+                    "product_id": 103,
+                    "quantity": 1,
+                    "unit_selling_price": 30,
+                },
+                {
+                    "product_id": 103,
+                    "quantity": 1,
+                    "unit_selling_price": 30,
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_billing_rolls_back_when_any_item_has_insufficient_stock():
+    headers = get_auth_headers()
+
+    before = client.get(
+        "/products/",
+        headers=headers,
+    ).json()
+
+    stock_before = {
+        product["product_id"]: product["current_stock"]
+        for product in before
+        if product["product_id"] in [103, 104]
+    }
+
+    response = client.post(
+        "/billing/",
+        headers=headers,
+        json={
+            "payment_mode": "CASH",
+            "items": [
+                {
+                    "product_id": 103,
+                    "quantity": 1,
+                    "unit_selling_price": 30,
+                },
+                {
+                    "product_id": 104,
+                    "quantity": 999,
+                    "unit_selling_price": 15,
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+
+    after = client.get(
+        "/products/",
+        headers=headers,
+    ).json()
+
+    stock_after = {
+        product["product_id"]: product["current_stock"]
+        for product in after
+        if product["product_id"] in [103, 104]
+    }
+
+    assert stock_after == stock_before
