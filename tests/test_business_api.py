@@ -8,12 +8,15 @@ from app.main import app
 client = TestClient(app)
 
 
-def get_auth_headers():
+def get_auth_headers(
+    email: str = "radhika.demo@example.com",
+    password: str = "Radhika@123",
+):
     response = client.post(
         "/auth/login",
         json={
-            "email": "radhika.demo@example.com",
-            "password": "Radhika@123",
+            "email": email,
+            "password": password,
         },
     )
 
@@ -24,6 +27,20 @@ def get_auth_headers():
     return {
         "Authorization": f"Bearer {token}"
     }
+
+
+def get_shop_a_headers():
+    return get_auth_headers(
+        email="radhika.demo@example.com",
+        password="Radhika@123",
+    )
+
+
+def get_shop_b_headers():
+    return get_auth_headers(
+        email="aarya.demo@example.com",
+        password="Aarya@123",
+    )
 
 
 def test_create_sale_and_reduce_stock():
@@ -105,7 +122,6 @@ def test_sale_fails_when_stock_is_insufficient():
     assert response.status_code == 400
     assert "Insufficient stock" in response.json()["detail"]
 
-
 def test_create_purchase_and_increase_stock():
     headers = get_auth_headers()
 
@@ -123,6 +139,7 @@ def test_create_purchase_and_increase_stock():
 
     response = client.post(
         "/purchases/",
+        headers=headers,
         json={
             "product_id": product_id,
             "quantity": 2,
@@ -147,12 +164,12 @@ def test_create_purchase_and_increase_stock():
     ).json()
 
     updated_product = next(
-        p for p in products_after
-        if p["product_id"] == product_id
+        product
+        for product in products_after
+        if product["product_id"] == product_id
     )
 
     assert updated_product["current_stock"] == initial_stock + 2
-
 
 def test_create_customer():
     headers = get_auth_headers()
@@ -1040,3 +1057,204 @@ def test_sale_cannot_be_recorded_using_another_shops_product():
     # Product does not belong to Radhika's shop
     assert unauthorized_sale_response.status_code == 404
     assert unauthorized_sale_response.json()["detail"] == "Product not found."
+    
+
+# -----------------------------------
+# Finance shop isolation tests
+# -----------------------------------
+
+def test_finance_is_isolated_by_shop():
+    shop_a_headers = get_auth_headers(
+        email="radhika.demo@example.com",
+        password="Radhika@123",
+    )
+
+    shop_b_headers = get_auth_headers(
+        email="aarya.demo@example.com",
+        password="Aarya@123",
+    )
+
+    # Shop A saves its financial information
+    shop_a_save_response = client.put(
+        "/finance/",
+        headers=shop_a_headers,
+        json={
+            "available_cash": 5000,
+            "pending_customer_payments": 1000,
+            "cash_reserve": 500,
+        },
+    )
+
+    assert shop_a_save_response.status_code == 200
+
+    # Shop B saves different financial information
+    shop_b_save_response = client.put(
+        "/finance/",
+        headers=shop_b_headers,
+        json={
+            "available_cash": 2000,
+            "pending_customer_payments": 300,
+            "cash_reserve": 200,
+        },
+    )
+
+    assert shop_b_save_response.status_code == 200
+
+    # Shop A can read ONLY Shop A's finance
+    shop_a_response = client.get(
+        "/finance/",
+        headers=shop_a_headers,
+    )
+
+    assert shop_a_response.status_code == 200
+
+    shop_a_finance = shop_a_response.json()
+
+    assert shop_a_finance["available_cash"] == 5000
+    assert shop_a_finance["pending_customer_payments"] == 1000
+    assert shop_a_finance["cash_reserve"] == 500
+
+    # Shop B can read ONLY Shop B's finance
+    shop_b_response = client.get(
+        "/finance/",
+        headers=shop_b_headers,
+    )
+
+    assert shop_b_response.status_code == 200
+
+    shop_b_finance = shop_b_response.json()
+
+    assert shop_b_finance["available_cash"] == 2000
+    assert shop_b_finance["pending_customer_payments"] == 300
+    assert shop_b_finance["cash_reserve"] == 200
+
+    # Verify Shop B did NOT receive Shop A's financial information
+    assert shop_b_finance["available_cash"] != shop_a_finance["available_cash"]
+    assert shop_b_finance["pending_customer_payments"] != shop_a_finance["pending_customer_payments"]
+    assert shop_b_finance["cash_reserve"] != shop_a_finance["cash_reserve"]
+# -----------------------------------
+# Purchase shop isolation tests
+# -----------------------------------
+
+def test_purchase_cannot_use_another_shops_product():
+    shop_a_headers = get_auth_headers(
+        email="radhika.demo@example.com",
+        password="Radhika@123",
+    )
+
+    shop_b_headers = get_auth_headers(
+        email="aarya.demo@example.com",
+        password="Aarya@123",
+    )
+
+    # Get a product belonging to Shop B
+    shop_b_products_response = client.get(
+        "/products/",
+        headers=shop_b_headers,
+    )
+
+    assert shop_b_products_response.status_code == 200
+
+    shop_b_products = shop_b_products_response.json()
+
+    assert len(shop_b_products) > 0
+
+    shop_b_product = shop_b_products[0]
+    shop_b_product_id = shop_b_product["product_id"]
+
+    # Shop A attempts to purchase Shop B's product
+    unauthorized_purchase_response = client.post(
+        "/purchases/",
+        headers=shop_a_headers,
+        json={
+            "product_id": shop_b_product_id,
+            "quantity": 1,
+            "unit_purchase_price": 50,
+            "payment_status": "PAID",
+        },
+    )
+
+    # The product must appear nonexistent from Shop A's perspective
+    assert unauthorized_purchase_response.status_code == 404
+    assert unauthorized_purchase_response.json()["detail"] == "Product not found"
+
+# -----------------------------------
+# Saved Purchase Planner isolation
+# -----------------------------------
+def test_saved_purchase_plan_is_isolated_by_shop():
+    shop_a_headers = get_auth_headers(
+        email="radhika.demo@example.com",
+        password="Radhika@123",
+    )
+
+    shop_b_headers = get_auth_headers(
+        email="aarya.demo@example.com",
+        password="Aarya@123",
+    )
+
+    # Save distinct finance data for Shop A
+    shop_a_finance_response = client.put(
+        "/finance/",
+        headers=shop_a_headers,
+        json={
+            "available_cash": 5000,
+            "pending_customer_payments": 1000,
+            "cash_reserve": 500,
+        },
+    )
+
+    assert shop_a_finance_response.status_code == 200
+
+    # Save distinct finance data for Shop B
+    shop_b_finance_response = client.put(
+        "/finance/",
+        headers=shop_b_headers,
+        json={
+            "available_cash": 2000,
+            "pending_customer_payments": 300,
+            "cash_reserve": 200,
+        },
+    )
+
+    assert shop_b_finance_response.status_code == 200
+
+    # Generate saved purchase plan for Shop A
+    shop_a_plan_response = client.post(
+        "/purchase-plan/saved",
+        headers=shop_a_headers,
+    )
+
+    assert shop_a_plan_response.status_code == 200
+
+    shop_a_plan = shop_a_plan_response.json()
+
+    # Generate saved purchase plan for Shop B
+    shop_b_plan_response = client.post(
+        "/purchase-plan/saved",
+        headers=shop_b_headers,
+    )
+
+    assert shop_b_plan_response.status_code == 200
+
+    shop_b_plan = shop_b_plan_response.json()
+
+    # Both shops should receive valid purchase plans
+    assert "recommendations" in shop_a_plan
+    assert "recommendations" in shop_b_plan
+
+    assert "spendable_cash" in shop_a_plan
+    assert "spendable_cash" in shop_b_plan
+
+    assert "remaining_spendable_cash" in shop_a_plan
+    assert "remaining_spendable_cash" in shop_b_plan
+
+    assert "cash_after_purchase" in shop_a_plan
+    assert "cash_after_purchase" in shop_b_plan
+
+    assert "protected_reserve" in shop_a_plan
+    assert "protected_reserve" in shop_b_plan
+
+    # The planner must use each shop's own available cash
+    # rather than another shop's financial data.
+    assert shop_a_plan["spendable_cash"] <= 5000
+    assert shop_b_plan["spendable_cash"] <= 2000
