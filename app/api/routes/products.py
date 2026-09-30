@@ -1,19 +1,18 @@
 import csv
 import io
 
-from fastapi import UploadFile, File
-from pydantic import ValidationError
-
-from app.schemas.planner import Product
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.product import ProductDB
 from app.models.purchase_receipt import PurchaseReceiptDB
+from app.models.shop import ShopDB
 from app.schemas.planner import Product
+from app.api.dependencies import get_current_shop
+
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -24,37 +23,65 @@ class ReceiveStockRequest(BaseModel):
 
 
 @router.post("/", response_model=Product)
-def create_product(product: Product, db: Session = Depends(get_db)):
+def create_product(
+    product: Product,
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
     existing_product = db.query(ProductDB).filter(
-        ProductDB.product_id == product.product_id
+        ProductDB.product_id == product.product_id,
+        ProductDB.shop_id == current_shop.shop_id,
     ).first()
 
     if existing_product:
         raise HTTPException(
             status_code=409,
+            detail="Product ID already exists in this shop."
+        )
+
+    db_product = ProductDB(
+        **product.model_dump(),
+        shop_id=current_shop.shop_id,
+    )
+
+    db.add(db_product)
+
+    try:
+        db.commit()
+        db.refresh(db_product)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
             detail="Product ID already exists."
         )
 
-    db_product = ProductDB(**product.model_dump())
-    db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
     return db_product
 
 
 @router.get("/", response_model=list[Product])
-def get_products(db: Session = Depends(get_db)):
-    return db.query(ProductDB).order_by(ProductDB.product_id).all()
+def get_products(
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(ProductDB)
+        .filter(ProductDB.shop_id == current_shop.shop_id)
+        .order_by(ProductDB.product_id)
+        .all()
+    )
 
 
 @router.put("/{product_id}", response_model=Product)
 def update_product(
     product_id: int,
     updated_product: Product,
+    current_shop: ShopDB = Depends(get_current_shop),
     db: Session = Depends(get_db),
 ):
     product = db.query(ProductDB).filter(
-        ProductDB.product_id == product_id
+        ProductDB.product_id == product_id,
+        ProductDB.shop_id == current_shop.shop_id,
     ).first()
 
     if not product:
@@ -69,21 +96,27 @@ def update_product(
             detail="Product ID in the request must match the URL."
         )
 
-    for field, value in updated_product.model_dump().items():
-        setattr(product, field, value)
+    product.name = updated_product.name
+    product.current_stock = updated_product.current_stock
+    product.average_daily_sales = updated_product.average_daily_sales
+    product.purchase_price = updated_product.purchase_price
+    product.supplier_lead_time_days = updated_product.supplier_lead_time_days
 
     db.commit()
     db.refresh(product)
+
     return product
 
 
 @router.delete("/{product_id}")
 def delete_product(
     product_id: int,
+    current_shop: ShopDB = Depends(get_current_shop),
     db: Session = Depends(get_db),
 ):
     product = db.query(ProductDB).filter(
-        ProductDB.product_id == product_id
+        ProductDB.product_id == product_id,
+        ProductDB.shop_id == current_shop.shop_id,
     ).first()
 
     if not product:
@@ -105,13 +138,17 @@ def delete_product(
     db.delete(product)
     db.commit()
 
-    return {"message": "Product deleted successfully.", "product_id": product_id}
+    return {
+        "message": "Product deleted successfully.",
+        "product_id": product_id,
+    }
 
 
 @router.post("/{product_id}/receive", response_model=Product)
 def receive_stock(
     product_id: int,
     request: ReceiveStockRequest,
+    current_shop: ShopDB = Depends(get_current_shop),
     db: Session = Depends(get_db),
 ):
     """Record a stock receipt exactly once per confirmation ID."""
@@ -127,7 +164,8 @@ def receive_stock(
         )
 
     product = db.query(ProductDB).filter(
-        ProductDB.product_id == product_id
+        ProductDB.product_id == product_id,
+        ProductDB.shop_id == current_shop.shop_id,
     ).first()
 
     if not product:
@@ -156,11 +194,14 @@ def receive_stock(
         )
 
     db.refresh(product)
+
     return product
+
 
 @router.post("/import")
 def import_products(
     file: UploadFile = File(...),
+    current_shop: ShopDB = Depends(get_current_shop),
     db: Session = Depends(get_db),
 ):
     # 1. Check the file type
@@ -227,17 +268,20 @@ def import_products(
         seen_ids.add(product.product_id)
         validated_products.append(product)
 
-    # 4. Find products that already exist
+    # 4. Find products that already exist IN THIS SHOP
     existing_ids = {
         product_id
         for (product_id,) in (
             db.query(ProductDB.product_id)
-            .filter(ProductDB.product_id.in_(seen_ids))
+            .filter(
+                ProductDB.product_id.in_(seen_ids),
+                ProductDB.shop_id == current_shop.shop_id,
+            )
             .all()
         )
     }
 
-    # 5. Add only new products
+    # 5. Add only new products to THIS SHOP
     imported_names = []
     skipped_names = []
 
@@ -250,6 +294,7 @@ def import_products(
             db.add(
                 ProductDB(
                     product_id=product.product_id,
+                    shop_id=current_shop.shop_id,
                     name=product.name,
                     current_stock=product.current_stock,
                     average_daily_sales=product.average_daily_sales,
@@ -257,6 +302,7 @@ def import_products(
                     supplier_lead_time_days=product.supplier_lead_time_days,
                 )
             )
+
             imported_names.append(product.name)
 
         db.commit()

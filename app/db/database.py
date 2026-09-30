@@ -25,6 +25,8 @@ def create_tables():
     from app.models.customer import CustomerDB
     from app.models.credit import CreditDB
     from app.models.credit_payment import CreditPaymentDB
+    from app.models.user import UserDB
+    from app.models.shop import ShopDB
 
     Base.metadata.create_all(bind=engine)
 

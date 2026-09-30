@@ -1,5 +1,4 @@
-
-from sqlalchemy import Column, Integer, String, Float
+from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from app.db.database import Base
 
 
@@ -7,6 +6,14 @@ class ProductDB(Base):
     __tablename__ = "products"
 
     product_id = Column(Integer, primary_key=True, index=True)
+
+    shop_id = Column(
+        Integer,
+        ForeignKey("shops.shop_id"),
+        nullable=True,
+        index=True,
+    )
+
     name = Column(String, nullable=False)
     current_stock = Column(Integer, nullable=False, default=0)
     average_daily_sales = Column(Float, nullable=False, default=0)

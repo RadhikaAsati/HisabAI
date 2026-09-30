@@ -23,6 +23,7 @@ from app.models.credit import CreditDB
 from app.models.credit_payment import CreditPaymentDB
 from app.api.routes import dashboard
 from app.api.routes import cashflow
+from app.api.routes import auth
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -92,6 +93,7 @@ app.include_router(credits.router)
 app.include_router(credit_payments.router)
 app.include_router(dashboard.router)
 app.include_router(cashflow.router)
+app.include_router(auth.router)
 
 @app.get("/")
 def root():

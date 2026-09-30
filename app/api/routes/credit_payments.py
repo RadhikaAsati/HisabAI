@@ -1,14 +1,17 @@
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.credit import CreditDB
 from app.models.credit_payment import CreditPaymentDB
+from app.models.customer import CustomerDB
+from app.models.shop import ShopDB
 from app.schemas.credit_payment import (
     CreditPaymentCreate,
     CreditPaymentResponse,
 )
+from app.api.dependencies import get_current_shop
+
 
 router = APIRouter(
     prefix="/credits/payments",
@@ -23,11 +26,19 @@ router = APIRouter(
 )
 def create_payment(
     payment: CreditPaymentCreate,
+    current_shop: ShopDB = Depends(get_current_shop),
     db: Session = Depends(get_db),
 ):
     credit = (
         db.query(CreditDB)
-        .filter(CreditDB.credit_id == payment.credit_id)
+        .join(
+            CustomerDB,
+            CreditDB.customer_id == CustomerDB.customer_id,
+        )
+        .filter(
+            CreditDB.credit_id == payment.credit_id,
+            CustomerDB.shop_id == current_shop.shop_id,
+        )
         .with_for_update()
         .first()
     )
@@ -69,9 +80,23 @@ def create_payment(
     "/",
     response_model=list[CreditPaymentResponse],
 )
-def get_payments(db: Session = Depends(get_db)):
+def get_payments(
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
     return (
         db.query(CreditPaymentDB)
+        .join(
+            CreditDB,
+            CreditPaymentDB.credit_id == CreditDB.credit_id,
+        )
+        .join(
+            CustomerDB,
+            CreditDB.customer_id == CustomerDB.customer_id,
+        )
+        .filter(
+            CustomerDB.shop_id == current_shop.shop_id,
+        )
         .order_by(CreditPaymentDB.payment_id.desc())
         .all()
     )

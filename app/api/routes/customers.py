@@ -1,14 +1,15 @@
-
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.customer import CustomerDB
-from app.schemas.customers import CustomerCreate, CustomerResponse
-
-from sqlalchemy import func
 from app.models.credit import CreditDB
 from app.models.credit_payment import CreditPaymentDB
+from app.models.shop import ShopDB
+from app.schemas.customers import CustomerCreate, CustomerResponse
+from app.api.dependencies import get_current_shop
+
 
 router = APIRouter(prefix="/customers", tags=["Customers"])
 
@@ -20,12 +21,16 @@ router = APIRouter(prefix="/customers", tags=["Customers"])
 )
 def create_customer(
     customer: CustomerCreate,
+    current_shop: ShopDB = Depends(get_current_shop),
     db: Session = Depends(get_db),
 ):
     if customer.phone:
         existing_customer = (
             db.query(CustomerDB)
-            .filter(CustomerDB.phone == customer.phone)
+            .filter(
+                CustomerDB.phone == customer.phone,
+                CustomerDB.shop_id == current_shop.shop_id,
+            )
             .first()
         )
 
@@ -38,6 +43,7 @@ def create_customer(
     new_customer = CustomerDB(
         name=customer.name.strip(),
         phone=customer.phone,
+        shop_id=current_shop.shop_id,
     )
 
     db.add(new_customer)
@@ -47,21 +53,42 @@ def create_customer(
     return new_customer
 
 
-@router.get("/", response_model=list[CustomerResponse])
-def get_customers(db: Session = Depends(get_db)):
-    return db.query(CustomerDB).order_by(CustomerDB.customer_id).all()
+@router.get(
+    "/",
+    response_model=list[CustomerResponse],
+)
+def get_customers(
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(CustomerDB)
+        .filter(CustomerDB.shop_id == current_shop.shop_id)
+        .order_by(CustomerDB.customer_id)
+        .all()
+    )
 
 
 @router.get("/balances/")
-def get_customer_balances(db: Session = Depends(get_db)):
-    customers = db.query(CustomerDB).all()
+def get_customer_balances(
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
+    customers = (
+        db.query(CustomerDB)
+        .filter(CustomerDB.shop_id == current_shop.shop_id)
+        .order_by(CustomerDB.customer_id)
+        .all()
+    )
 
     balances = []
 
     for customer in customers:
         total_credit = (
             db.query(func.coalesce(func.sum(CreditDB.amount), 0))
-            .filter(CreditDB.customer_id == customer.customer_id)
+            .filter(
+                CreditDB.customer_id == customer.customer_id
+            )
             .scalar()
         )
 
@@ -73,7 +100,9 @@ def get_customer_balances(db: Session = Depends(get_db)):
                 CreditDB,
                 CreditPaymentDB.credit_id == CreditDB.credit_id,
             )
-            .filter(CreditDB.customer_id == customer.customer_id)
+            .filter(
+                CreditDB.customer_id == customer.customer_id
+            )
             .scalar()
         )
 
