@@ -28,7 +28,7 @@ def calculate_days_of_stock(product: Product) -> float:
 
 def needs_restock(
     product: Product,
-    safety_buffer_days: int = 1,
+    safety_buffer_days: int = 2,
 ) -> bool:
     """
     Check whether a product needs restocking.

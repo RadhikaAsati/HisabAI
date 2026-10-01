@@ -11,7 +11,7 @@ class BillingItem(BaseModel):
 
 class BillingCreate(BaseModel):
     customer_id: int | None = None
-    payment_mode: Literal["CASH", "CREDIT"]
+    payment_mode: Literal["CASH","UPI", "CREDIT"]
     items: list[BillingItem] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -39,7 +39,7 @@ class BillingItemResponse(BaseModel):
 
 class BillingResponse(BaseModel):
     total_amount: float
-    payment_mode: Literal["CASH", "CREDIT"]
+    payment_mode: Literal["CASH","UPI", "CREDIT"]
     customer_id: int | None
     items: list[BillingItemResponse]
     credit_id: int | None = None
