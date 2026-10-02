@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "./client"
 export type BillItemExtraction = {
   product_name: string
   quantity: number
@@ -57,7 +58,7 @@ export async function scanBill(
   formData.append("file", file)
 
   const response = await fetch(
-    "http://127.0.0.1:8000/ai/scan-bill",
+    `${API_BASE_URL}/ai/scan-bill`,
     {
       method: "POST",
       headers: token
@@ -86,7 +87,7 @@ export async function confirmScannedBill(
   const token = localStorage.getItem("hisabai-token")
 
   const response = await fetch(
-    "http://127.0.0.1:8000/ai/scan-bill/confirm",
+    `${API_BASE_URL}/ai/scan-bill/confirm`,
     {
       method: "POST",
       headers: {
