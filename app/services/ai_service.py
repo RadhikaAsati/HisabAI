@@ -2,10 +2,14 @@ import time
 
 from google import genai
 from google.genai import errors
-
+from sqlalchemy.orm import Session
 from app.core.config import settings
-from app.schemas.ai import TransactionExtraction
 from app.models.product import ProductDB
+from app.schemas.ai import (
+    BillExtraction,
+    TransactionExtraction,
+)
+
 
 class AIService:
     """
@@ -23,7 +27,10 @@ class AIService:
             api_key=settings.gemini_api_key
         )
 
-    def extract_transaction(self, text: str) -> TransactionExtraction:
+    def extract_transaction(
+        self,
+        text: str,
+    ) -> TransactionExtraction:
         prompt = f"""
 You are the bookkeeping extraction assistant for HisabAI.
 
@@ -94,4 +101,50 @@ Shopkeeper statement:
                 return product
 
         return None
+
+    def extract_bill(
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+    ) -> BillExtraction:
+        prompt = """
+You are extracting structured data from a shop bill or invoice.
+
+Extract ONLY information that is explicitly visible in the image.
+
+Rules:
+- Do not invent missing values.
+- Extract supplier name if visible.
+- Extract customer name if visible.
+- Extract invoice number if visible.
+- Extract invoice date if visible.
+- Extract every clearly identifiable product line.
+- Extract product name, quantity, unit price, and line total when explicitly shown.
+- Extract grand total only if explicitly visible.
+- If a field is not visible or cannot be determined, use null where allowed.
+- Do not calculate or guess missing financial values.
+- Return only JSON matching the provided schema.
+- Confidence must be between 0 and 1.
+"""
+
+        response = self.client.models.generate_content(
+            model="gemini-3.5-flash-lite",
+            contents=[
+                prompt,
+                genai.types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type=mime_type,
+                ),
+            ],
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": BillExtraction,
+            },
+        )
+
+        return BillExtraction.model_validate_json(
+            response.text
+        )
+
+
 ai_service = AIService()

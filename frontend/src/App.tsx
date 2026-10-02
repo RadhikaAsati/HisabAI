@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect,useRef, useState } from "react"
 import type { FormEvent } from "react"
 
 import { login, logout } from "./api/auth"
@@ -35,6 +35,12 @@ import {
   type VoiceEntryResponse,
 } from "./api/ai"
 
+import {
+  scanBill,
+  confirmScannedBill,
+  type BillScanResponse,
+} from "./api/bill"
+
 type View =
   | "today"
   | "stock"
@@ -56,7 +62,6 @@ function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loginLoading, setLoginLoading] = useState(false)
@@ -187,7 +192,7 @@ function App() {
             )}
 
             {view === "voice" && <VoiceEntryPage />}
-            {view === "scan" && <ComingSoonPage type="scan" />}
+            {view === "scan" && <BillScannerPage />}
             {view === "profit" && <ComingSoonPage type="profit" />}
             {view === "ask" && <ComingSoonPage type="ask" />}
           </div>
@@ -3040,8 +3045,74 @@ function BillCartRow({
 function VoiceEntryPage() {
   const [text, setText] = useState("")
   const [loading, setLoading] = useState(false)
+  const [listening, setListening] = useState(false)
   const [result, setResult] = useState<VoiceEntryResponse | null>(null)
   const [error, setError] = useState("")
+
+  const recognitionRef = useRef<any>(null)
+
+  function startListening() {
+    setError("")
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition
+
+    if (!SpeechRecognition) {
+      setError(
+        "Voice input is not supported in this browser. Please use Chrome or a supported browser.",
+      )
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+
+    recognition.lang = "en-IN"
+    recognition.continuous = false
+    recognition.interimResults = true
+
+    recognition.onstart = () => {
+      setListening(true)
+    }
+
+    recognition.onresult = (event: any) => {
+      let transcript = ""
+
+      for (
+        let i = event.resultIndex;
+        i < event.results.length;
+        i++
+      ) {
+        transcript += event.results[i][0].transcript
+      }
+
+      setText(transcript)
+    }
+
+    recognition.onerror = (event: any) => {
+      setListening(false)
+
+      if (event.error === "not-allowed") {
+        setError(
+          "Microphone permission was blocked. Please allow microphone access and try again.",
+        )
+      } else {
+        setError("Could not capture your voice. Please try again.")
+      }
+    }
+
+    recognition.onend = () => {
+      setListening(false)
+    }
+
+    recognitionRef.current = recognition
+    recognition.start()
+  }
+
+  function stopListening() {
+    recognitionRef.current?.stop()
+    setListening(false)
+  }
 
   async function handleUnderstand() {
     if (!text.trim()) return
@@ -3064,6 +3135,39 @@ function VoiceEntryPage() {
     }
   }
 
+  async function handleConfirmSale() {
+    if (
+      !result?.product_match ||
+      !result.extraction.quantity ||
+      !result.extraction.amount
+    ) {
+      return
+    }
+
+    try {
+      setLoading(true)
+      setError("")
+
+      await confirmVoiceSale({
+        product_id: result.product_match.product_id,
+        quantity: Math.round(result.extraction.quantity),
+        total_amount: result.extraction.amount,
+        payment_mode: "CASH",
+      })
+
+      setText("")
+      setResult(null)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not confirm the sale.",
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -3076,40 +3180,71 @@ function VoiceEntryPage() {
           Speak your hisab. 🎙️
         </h1>
 
-        <p className="mt-2 max-w-2xl text-sm text-slate-600">
-          Tell HisabAI what happened in your shop. It understands
-          Hindi, Hinglish, and English and turns your words into
-          a structured business entry.
+        <p className="mt-2 max-w-3xl text-sm text-slate-600">
+          Tell HisabAI what happened in your shop. Speak naturally
+          in Hindi, Hinglish, or English and let AI turn your words
+          into a structured business entry.
         </p>
       </div>
 
-      {/* Input card */}
+      {/* Voice input card */}
       <div className="rounded-3xl border border-[#dbe8e6] bg-white p-6 shadow-sm">
-        <label className="mb-3 block text-sm font-semibold text-[#073f40]">
-          What happened today?
-        </label>
+        <div className="flex items-center justify-between gap-4">
+          <label className="text-sm font-semibold text-[#073f40]">
+            What happened today?
+          </label>
+
+          <span className="rounded-full bg-[#eef5f4] px-3 py-1 text-xs font-semibold text-[#16706e]">
+            Hindi • Hinglish • English
+          </span>
+        </div>
 
         <textarea
           value={text}
           onChange={(event) => setText(event.target.value)}
           placeholder='Try: "Aaj 5 packet Maggi ₹60 mein beche."'
           rows={5}
-          className="w-full resize-none rounded-2xl border border-[#d8e5e3] bg-[#f8fbfa] p-4 text-sm outline-none transition focus:border-[#ef684b] focus:ring-2 focus:ring-[#ef684b]/20"
+          className="mt-3 w-full resize-none rounded-2xl border border-[#d8e5e3] bg-[#f8fbfa] p-4 text-sm outline-none transition focus:border-[#ef684b] focus:ring-2 focus:ring-[#ef684b]/20"
         />
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
+          {!listening ? (
+            <button
+              onClick={startListening}
+              disabled={loading}
+              className="flex items-center gap-2 rounded-xl bg-[#073f40] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0a5051] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              🎙️ Start Speaking
+            </button>
+          ) : (
+            <button
+              onClick={stopListening}
+              className="flex items-center gap-2 rounded-xl bg-[#ef684b] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e25a3f]"
+            >
+              ⏹ Stop Listening
+            </button>
+          )}
+
           <button
             onClick={handleUnderstand}
-            disabled={loading || !text.trim()}
+            disabled={loading || !text.trim() || listening}
             className="rounded-xl bg-[#ef684b] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e25a3f] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? "Understanding..." : "✨ Understand Entry"}
           </button>
 
-          <p className="text-xs text-slate-500">
-            AI understands your words. You approve before anything is saved.
-          </p>
+          {listening && (
+            <div className="flex items-center gap-2 text-sm font-semibold text-[#ef684b]">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#ef684b]" />
+              Listening...
+            </div>
+          )}
         </div>
+
+        <p className="mt-3 text-xs text-slate-500">
+          Speak naturally. HisabAI will understand your entry before
+          anything is saved.
+        </p>
       </div>
 
       {/* Error */}
@@ -3134,7 +3269,8 @@ function VoiceEntryPage() {
             </div>
 
             <div className="rounded-full bg-[#eaf7f1] px-3 py-1 text-xs font-bold text-[#16706e]">
-              {Math.round(result.extraction.confidence * 100)}% confidence
+              {Math.round(result.extraction.confidence * 100)}%
+              confidence
             </div>
           </div>
 
@@ -3170,7 +3306,6 @@ function VoiceEntryPage() {
             </div>
           </div>
 
-          {/* Product match */}
           {result.product_match && (
             <div className="mt-5 rounded-2xl border border-[#dbe8e6] bg-[#f8fbfa] p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-[#16706e]">
@@ -3198,7 +3333,6 @@ function VoiceEntryPage() {
             </div>
           )}
 
-          {/* Confirmation */}
           {result.extraction.transaction_type === "SALE" &&
             result.product_match &&
             result.extraction.quantity &&
@@ -3215,30 +3349,7 @@ function VoiceEntryPage() {
                 </div>
 
                 <button
-                  onClick={async () => {
-                    try {
-                      setLoading(true)
-                      setError("")
-
-                      await confirmVoiceSale({
-                        product_id: result.product_match!.product_id,
-                        quantity: Math.round(result.extraction.quantity!),
-                        total_amount: result.extraction.amount!,
-                        payment_mode: "CASH",
-                      })
-
-                      setText("")
-                      setResult(null)
-                    } catch (err) {
-                      setError(
-                        err instanceof Error
-                          ? err.message
-                          : "Could not confirm the sale.",
-                      )
-                    } finally {
-                      setLoading(false)
-                    }
-                  }}
+                  onClick={handleConfirmSale}
                   disabled={loading}
                   className="rounded-xl bg-[#ef684b] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e25a3f] disabled:opacity-50"
                 >
@@ -3251,6 +3362,478 @@ function VoiceEntryPage() {
     </div>
   )
 }
+
+function BillScannerPage() {
+  const [file, setFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] =
+    useState<BillScanResponse | null>(null)
+  const [error, setError] = useState("")
+
+  const [paymentMode, setPaymentMode] =
+    useState<"CASH" | "UPI" | "CREDIT">("CASH")
+
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  function handleFileChange(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const selectedFile = event.target.files?.[0]
+
+    if (!selectedFile) {
+      return
+    }
+
+    setFile(selectedFile)
+    setResult(null)
+    setError("")
+    setSaved(false)
+
+    const objectUrl = URL.createObjectURL(selectedFile)
+    setPreview(objectUrl)
+  }
+
+  async function handleScan() {
+    if (!file) {
+      setError("Please upload a bill image first.")
+      return
+    }
+
+    setLoading(true)
+    setError("")
+    setResult(null)
+    setSaved(false)
+
+    try {
+      const response = await scanBill(file)
+      setResult(response)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not scan the bill.",
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleConfirmSave() {
+    if (!result) {
+      return
+    }
+
+    if (!result.extraction.items.length) {
+      setError("No bill items were extracted.")
+      return
+    }
+
+    if (paymentMode === "CREDIT") {
+      setError(
+        "Credit billing needs an existing customer selection. Please use Cash or UPI for this scanned bill.",
+      )
+      return
+    }
+
+    setSaving(true)
+    setError("")
+
+    try {
+      const productIds: Record<string, number> = {
+        milk: 101,
+        bread: 102,
+        biscuits: 103,
+        maggi: 104,
+      }
+
+      const items = result.extraction.items.map((item) => {
+        const productId =
+          productIds[item.product_name.trim().toLowerCase()]
+
+        if (!productId) {
+          throw new Error(
+            `Could not match "${item.product_name}" to a shop product.`,
+          )
+        }
+
+        return {
+          product_id: productId,
+          quantity: Math.round(item.quantity),
+          unit_selling_price: item.unit_price,
+        }
+      })
+
+      await confirmScannedBill({
+        customer_id: null,
+        payment_mode: paymentMode,
+        items,
+      })
+
+      setSaved(true)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not save the scanned bill.",
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handleRemove() {
+    setFile(null)
+    setPreview("")
+    setResult(null)
+    setError("")
+    setSaved(false)
+    setPaymentMode("CASH")
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <p className="text-sm font-semibold text-[#ef684b]">
+          SMART BILL SCANNER
+        </p>
+
+        <h1 className="mt-1 text-3xl font-bold text-[#073f40]">
+          Turn bills into clean data. 🧾
+        </h1>
+
+        <p className="mt-2 max-w-3xl text-sm text-slate-600">
+          Upload a shop bill and let HisabAI extract the useful
+          details automatically. Review everything before it is
+          saved.
+        </p>
+      </div>
+
+      {/* Upload + Preview */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Upload */}
+        <div className="rounded-3xl border border-[#dbe8e6] bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-[#16706e]">
+                Step 1
+              </p>
+
+              <h2 className="mt-1 text-xl font-bold text-[#073f40]">
+                Upload your bill
+              </h2>
+            </div>
+
+            <div className="rounded-full bg-[#fff4d8] px-3 py-1 text-xs font-bold text-[#a36b00]">
+              AI Vision
+            </div>
+          </div>
+
+          <label className="mt-5 flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#cbdedb] bg-[#f8fbfa] p-6 text-center transition hover:border-[#ef684b] hover:bg-[#fffaf8]">
+            <div className="text-4xl">📸</div>
+
+            <p className="mt-3 font-bold text-[#073f40]">
+              Choose a bill image
+            </p>
+
+            <p className="mt-1 text-xs text-slate-500">
+              JPG, JPEG, PNG or other supported image formats
+            </p>
+
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+          </label>
+
+          {file && (
+            <div className="mt-4 flex items-center justify-between rounded-2xl bg-[#eef5f4] p-4">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-[#073f40]">
+                  {file.name}
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  {(file.size / 1024).toFixed(1)} KB
+                </p>
+              </div>
+
+              <button
+                onClick={handleRemove}
+                className="ml-4 rounded-lg px-3 py-2 text-xs font-bold text-[#ef684b] hover:bg-white"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={handleScan}
+            disabled={!file || loading}
+            className="mt-5 w-full rounded-xl bg-[#ef684b] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e25a3f] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading
+              ? "🔍 Scanning with AI..."
+              : "✨ Scan Bill"}
+          </button>
+
+          <p className="mt-3 text-center text-xs text-slate-500">
+            Nothing is saved until you review and confirm.
+          </p>
+        </div>
+
+        {/* Preview */}
+        <div className="rounded-3xl border border-[#dbe8e6] bg-white p-6 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#16706e]">
+            Preview
+          </p>
+
+          <h2 className="mt-1 text-xl font-bold text-[#073f40]">
+            Your uploaded bill
+          </h2>
+
+          {preview ? (
+            <div className="mt-5 overflow-hidden rounded-2xl border border-[#dbe8e6] bg-[#f8fbfa]">
+              <img
+                src={preview}
+                alt="Uploaded bill preview"
+                className="max-h-96 w-full object-contain"
+              />
+            </div>
+          ) : (
+            <div className="mt-5 flex min-h-56 items-center justify-center rounded-2xl bg-[#f8fbfa] text-center">
+              <div>
+                <div className="text-4xl">🧾</div>
+
+                <p className="mt-3 text-sm font-semibold text-slate-500">
+                  Your bill preview will appear here
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* Success */}
+      {saved && (
+        <div className="rounded-2xl border border-[#acdccc] bg-[#eaf7f1] p-5">
+          <p className="font-bold text-[#217b59]">
+            ✓ Bill saved successfully!
+          </p>
+
+          <p className="mt-1 text-sm text-[#4f7d6c]">
+            The sale has been recorded and inventory has been
+            updated.
+          </p>
+        </div>
+      )}
+
+      {/* AI Result */}
+      {result && (
+        <div className="rounded-3xl border border-[#dbe8e6] bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-[#16706e]">
+                AI understood
+              </p>
+
+              <h2 className="mt-1 text-2xl font-bold text-[#073f40]">
+                Review extracted bill
+              </h2>
+            </div>
+
+            <div className="rounded-full bg-[#eaf7f1] px-4 py-2 text-xs font-bold text-[#16706e]">
+              {Math.round(
+                result.extraction.confidence * 100,
+              )}
+              % confidence
+            </div>
+          </div>
+
+          {/* Bill details */}
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl bg-[#eef5f4] p-4">
+              <p className="text-xs text-slate-500">
+                Customer
+              </p>
+
+              <p className="mt-1 text-lg font-bold text-[#073f40]">
+                {result.extraction.customer_name || "—"}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#fff4d8] p-4">
+              <p className="text-xs text-slate-500">
+                Supplier
+              </p>
+
+              <p className="mt-1 text-lg font-bold text-[#073f40]">
+                {result.extraction.supplier_name || "—"}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#f4efff] p-4">
+              <p className="text-xs text-slate-500">
+                Invoice
+              </p>
+
+              <p className="mt-1 text-lg font-bold text-[#073f40]">
+                {result.extraction.invoice_number || "—"}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#eaf7f1] p-4">
+              <p className="text-xs text-slate-500">
+                Grand Total
+              </p>
+
+              <p className="mt-1 text-lg font-bold text-[#073f40]">
+                {result.extraction.grand_total != null
+                  ? `₹${result.extraction.grand_total}`
+                  : "—"}
+              </p>
+            </div>
+          </div>
+
+          {/* Extracted items */}
+          <div className="mt-6 overflow-hidden rounded-2xl border border-[#dbe8e6]">
+            <div className="bg-[#073f40] px-4 py-3 text-sm font-bold text-white">
+              Extracted Items
+            </div>
+
+            <div className="divide-y divide-[#e5eeee]">
+              {result.extraction.items.map(
+                (item, index) => (
+                  <div
+                    key={`${item.product_name}-${index}`}
+                    className="grid gap-3 px-4 py-4 sm:grid-cols-4"
+                  >
+                    <div>
+                      <p className="text-xs text-slate-500">
+                        Product
+                      </p>
+
+                      <p className="font-bold text-[#073f40]">
+                        {item.product_name}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-500">
+                        Quantity
+                      </p>
+
+                      <p className="font-semibold text-[#073f40]">
+                        {item.quantity}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-500">
+                        Unit Price
+                      </p>
+
+                      <p className="font-semibold text-[#073f40]">
+                        ₹{item.unit_price}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-500">
+                        Line Total
+                      </p>
+
+                      <p className="font-semibold text-[#073f40]">
+                        ₹{item.total_amount}
+                      </p>
+                    </div>
+                  </div>
+                ),
+              )}
+            </div>
+          </div>
+
+          {/* Payment mode */}
+          <div className="mt-6 rounded-2xl border border-[#dbe8e6] bg-[#f8fbfa] p-4">
+            <p className="text-sm font-bold text-[#073f40]">
+              How was this bill paid?
+            </p>
+
+            <div className="mt-3 flex flex-wrap gap-3">
+              {(["CASH", "UPI", "CREDIT"] as const).map(
+                (mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setPaymentMode(mode)
+                      setError("")
+                    }}
+                    className={`rounded-xl px-5 py-3 text-sm font-bold transition ${
+                      paymentMode === mode
+                        ? "bg-[#073f40] text-white"
+                        : "border border-[#d8e5e3] bg-white text-[#073f40] hover:border-[#ef684b]"
+                    }`}
+                  >
+                    {mode === "CASH"
+                      ? "💵 Cash"
+                      : mode === "UPI"
+                        ? "📱 UPI"
+                        : "📒 Credit"}
+                  </button>
+                ),
+              )}
+            </div>
+
+            {paymentMode === "CREDIT" && (
+              <p className="mt-3 text-xs font-semibold text-[#a36b00]">
+                Credit requires selecting an existing customer.
+                For this scanner version, use Cash or UPI.
+              </p>
+            )}
+          </div>
+
+          {/* Confirmation */}
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-[#073f40] p-5">
+            <div className="text-white">
+              <p className="font-bold">
+                Review complete?
+              </p>
+
+              <p className="mt-1 text-sm text-white/70">
+                Confirm only after checking the extracted details.
+              </p>
+            </div>
+
+            <button
+              onClick={handleConfirmSave}
+              disabled={saving || saved || paymentMode === "CREDIT"}
+              className="rounded-xl bg-[#ef684b] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e25a3f] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saved
+                ? "✓ Saved Successfully"
+                : saving
+                  ? "Saving..."
+                  : "✓ Confirm & Save"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* =========================================================
    COMING SOON
 ========================================================= */
