@@ -55,3 +55,4 @@ cffi==2.1.1
 pwdlib==0.3.1
 pycparser==3.0
 PyJWT==2.15.1
+google-genai==2.26.0
