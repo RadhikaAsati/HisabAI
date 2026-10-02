@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "./api/client"
 import { useEffect,useRef, useState } from "react"
 import type { FormEvent } from "react"
 
@@ -1150,7 +1151,7 @@ async function handleAddProduct() {
   try {
     const token = localStorage.getItem("hisabai-token")
 
-    const response = await fetch("http://127.0.0.1:8000/products/", {
+    const response = await fetch(`${API_BASE_URL}/products/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1169,10 +1170,18 @@ async function handleAddProduct() {
     })
 
     if (!response.ok) {
-      const error = await response.json()
-      alert(error.detail?.[0]?.msg || "Could not add product")
-      return
-    }
+  const errorText = await response.text()
+
+  console.error("Add product API error:", response.status, errorText)
+
+  alert(
+    `Could not add product (${response.status}): ${
+      errorText || "Unknown server error"
+    }`
+  )
+
+  return
+}
 
     const created = await response.json()
 
@@ -1190,9 +1199,14 @@ async function handleAddProduct() {
 
     alert("Product added successfully! 🎉")
   } catch (error) {
-    console.error(error)
-    alert("Something went wrong while adding the product.")
+  console.error("Add product error:", error)
+
+  if (error instanceof Error) {
+    alert(`Could not add product: ${error.message}`)
+  } else {
+    alert("Could not add product. Please try again.")
   }
+}
 }
   useEffect(() => {
     async function loadProducts() {
