@@ -6,9 +6,14 @@ import { getDashboard } from "./api/dashboard"
 import type { DashboardResponse } from "./api/dashboard"
 import { getProducts } from "./api/products"
 import type { Product } from "./api/products"
+import AskHisabAIPage from "./pages/AskHisabAIPage"
+import ProfitWatchPage from "./ProfitWatchPage"
+import SalesHistoryPage from "./SalesHistoryPage"
+
 import {
   createPurchasePlan,
 } from "./api/purchasePlanner"
+
 import { recordPurchase } from "./api/purchases"
 import type {
   PurchasePlanResponse,
@@ -41,6 +46,8 @@ import {
   type BillScanResponse,
 } from "./api/bill"
 
+type Language = "en" | "hi"
+
 type View =
   | "today"
   | "stock"
@@ -51,13 +58,18 @@ type View =
   | "scan"
   | "profit"
   | "ask"
+  | "sales-history"
 
 function App() {
   const [token, setToken] = useState<string | null>(
-    localStorage.getItem("hisabai-token")
-  )
+  localStorage.getItem("hisabai-token")
+)
+  const [userName, setUserName] = useState<string>(
+  localStorage.getItem("hisabai-user-name") || "",
+)
 
   const [view, setView] = useState<View>("today")
+  const [language, setLanguage] = useState<Language>("en")
 
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -97,6 +109,8 @@ function App() {
     try {
       const response = await login(email, password)
       setToken(response.access_token)
+      setUserName(response.user.name)
+      localStorage.setItem("hisabai-user-name", response.user.name)
     } catch (err) {
       console.error(err)
       setLoginError("Invalid email or password.")
@@ -108,6 +122,8 @@ function App() {
   function handleLogout() {
     logout()
     setToken(null)
+    setUserName("")
+    localStorage.removeItem("hisabai-user-name")
     setDashboard(null)
     setView("today")
   }
@@ -136,6 +152,7 @@ function App() {
           setView={setView}
           shopName={dashboard?.shop.shop_name ?? "Your Shop"}
           onLogout={handleLogout}
+          language={language}
         />
 
         {/* MAIN */}
@@ -144,6 +161,9 @@ function App() {
           {/* TOP BAR */}
           <TopBar
             shopName={dashboard?.shop.shop_name ?? "Your Shop"}
+            language={language}
+            setLanguage={setLanguage}
+            userName={userName}
           />
 
           {/* CONTENT */}
@@ -160,7 +180,10 @@ function App() {
                 dashboard={dashboard}
                 loading={loading}
                 setView={setView}
+                userName={userName}
               />
+
+              
             )}
 
             {view === "stock" && (
@@ -193,8 +216,13 @@ function App() {
 
             {view === "voice" && <VoiceEntryPage />}
             {view === "scan" && <BillScannerPage />}
-            {view === "profit" && <ComingSoonPage type="profit" />}
-            {view === "ask" && <ComingSoonPage type="ask" />}
+            {view === "profit" && <ProfitWatchPage />}
+            {view === "ask" && <AskHisabAIPage />}
+            {view === "sales-history" && (
+  <SalesHistoryPage
+    onBack={() => setView("today")}
+  />
+)}
           </div>
         </main>
       </div>
@@ -211,11 +239,13 @@ function Sidebar({
   setView,
   shopName,
   onLogout,
+  language,
 }: {
   view: View
   setView: (view: View) => void
   shopName: string
   onLogout: () => void
+  language: Language
 }) {
   return (
     <aside className="hidden w-[245px] shrink-0 bg-[#073f40] text-white lg:flex lg:flex-col">
@@ -243,7 +273,7 @@ function Sidebar({
 
         <SidebarItem
           icon="⌂"
-          label="Today"
+          label={language === "hi" ? "आज" : "Today"}
           active={view === "today"}
           onClick={() => setView("today")}
         />
@@ -257,21 +287,21 @@ function Sidebar({
 
         <SidebarItem
           icon="▤"
-          label="New Bill"
+          label={language === "hi" ? "नया बिल" : "New Bill"}
           active={view === "bill"}
           onClick={() => setView("bill")}
         />
 
         <SidebarItem
           icon="♧"
-          label="Khata (Udhaar)"
+          label={language === "hi" ? "खाता (उधार)" : "Khata (Udhaar)"}
           active={view === "khata"}
           onClick={() => setView("khata")}
         />
 
         <SidebarItem
           icon="🛒"
-          label="Buy (Purchase)"
+          label={language === "hi" ? "खरीदारी" : "Buy (Purchase)"}
           active={view === "buy"}
           onClick={() => setView("buy")}
         />
@@ -284,28 +314,28 @@ function Sidebar({
 
         <SidebarItem
           icon="♩"
-          label="Voice Entry"
+          label={language === "hi" ? "वॉइस एंट्री" : "Voice Entry"}
           active={view === "voice"}
           onClick={() => setView("voice")}
         />
 
         <SidebarItem
           icon="▣"
-          label="Scan Bill"
+          label={language === "hi" ? "बिल स्कैन करें" : "Scan Bill"}
           active={view === "scan"}
           onClick={() => setView("scan")}
         />
 
         <SidebarItem
           icon="⌁"
-          label="Profit Watch"
+          label={language === "hi" ? "मुनाफ़ा देखें" : "Profit Watch"}
           active={view === "profit"}
           onClick={() => setView("profit")}
         />
 
         <SidebarItem
           icon="✦"
-          label="Ask HisabAI"
+          label={language === "hi" ? "HisabAI से पूछें" : "Ask HisabAI"}
           active={view === "ask"}
           onClick={() => setView("ask")}
         />
@@ -320,7 +350,7 @@ function Sidebar({
           className="m-4 flex w-[calc(100%-2rem)] items-center gap-3 rounded-xl px-4 py-3 text-sm text-white/70 transition hover:bg-white/10 hover:text-white"
         >
           <span>↪</span>
-          Sign out
+          {language === "hi" ? "साइन आउट" : "Sign out"}
         </button>
       </div>
     </aside>
@@ -359,9 +389,16 @@ function SidebarItem({
 
 function TopBar({
   shopName,
+  language,
+  setLanguage,
+  userName,
 }: {
   shopName: string
+  language: Language
+  setLanguage: (language: Language) => void
+  userName: string
 }) {
+    const [searchQuery, setSearchQuery] = useState("")
   return (
     <header className="sticky top-0 z-30 border-b border-[#cfdedc] bg-[#f4f8f7]/95 backdrop-blur">
 
@@ -369,24 +406,47 @@ function TopBar({
 
         <div>
           <p className="font-serif text-3xl font-bold text-[#123b3b]">
-            Today
+            {language === "hi" ? "आज" : "Today"}
           </p>
 
           <p className="mt-0.5 text-xs text-[#6c7e7c]">
-            {shopName} · 01 October
+            {shopName} ·{" "}
+  {new Date().toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "long",
+  })}
           </p>
         </div>
 
-        <div className="hidden items-center gap-3 md:flex">
-
-          <button className="rounded-xl border border-[#b9ccca] bg-white px-4 py-2 text-sm font-semibold">
-            🌐 English⌄
-          </button>
+        <div className="ml-auto hidden items-center gap-3 md:flex">
 
           <div className="flex w-64 items-center gap-2 rounded-xl border border-[#b9ccca] bg-white px-3 py-2 text-sm text-[#7b8b89]">
-            <span>⌕</span>
-            <span>Search products, customers...</span>
-          </div>
+  <span>⌕</span>
+
+  <input
+    type="text"
+    value={searchQuery}
+    onChange={(event) => setSearchQuery(event.target.value)}
+    placeholder={
+      language === "hi"
+        ? "उत्पाद, ग्राहक खोजें..."
+        : "Search products, customers..."
+    }
+    className="w-full bg-transparent text-sm text-[#123b3b] outline-none placeholder:text-[#8a9b99]"
+  />
+</div>
+
+          <select
+            value={language}
+            onChange={(event) =>
+              setLanguage(event.target.value as Language)
+            }
+            className="h-10 cursor-pointer rounded-xl border border-[#b9ccca] bg-white px-4 text-sm font-semibold text-[#123b3b] outline-none"
+            aria-label="Language"
+          >
+            <option value="en">🌐 English</option>
+            <option value="hi">🌐 हिन्दी</option>
+          </select>
 
           <button className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-[#d6b96d] bg-[#fff4d8] text-xl">
             ♧
@@ -394,8 +454,9 @@ function TopBar({
           </button>
 
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0c5555] font-bold text-white">
-            R
+            {userName ? userName.charAt(0).toUpperCase() : "?"}
           </div>
+
         </div>
       </div>
     </header>
@@ -410,15 +471,28 @@ function TodayDashboard({
   dashboard,
   loading,
   setView,
+  userName,
 }: {
   dashboard: DashboardResponse | null
   loading: boolean
   setView: (view: View) => void
+  userName: string
 }) {
   if (loading || !dashboard) {
     return <LoadingState />
   }
+  const currentHour = new Date().getHours()
 
+const greeting =
+  currentHour < 5
+    ? "Good night,"
+    : currentHour < 12
+      ? "Good morning,"
+      : currentHour < 17
+        ? "Good afternoon,"
+        : currentHour < 21
+          ? "Good evening,"
+          : "Good night,"
   const { summary, inventory, recent_transactions } = dashboard
   const alert = inventory.alerts[0]
 
@@ -472,9 +546,11 @@ function TodayDashboard({
           </p>
 
           <h1 className="font-serif text-4xl font-black leading-[1.02] text-[#123b3b] sm:text-5xl">
-            Good morning,
+            {greeting}
             <br />
-            <span className="text-[#e95e42]">Radhika!</span>
+            <span className="text-[#e95e42]">
+              {userName || "there"}!
+            </span>
           </h1>
 
           <p className="mt-3 font-serif text-xl font-bold text-[#164c4c]">
@@ -550,7 +626,10 @@ function TodayDashboard({
       <section className="grid gap-5 xl:grid-cols-[1.2fr_0.9fr_0.65fr]">
 
         {/* TRANSACTIONS */}
-        <TransactionsCard transactions={recent_transactions} />
+        <TransactionsCard
+  transactions={recent_transactions}
+  setView={setView}
+/>
 
         {/* QUICK ACTIONS */}
         <QuickActions setView={setView} />
@@ -829,8 +908,10 @@ function HisabAISuggestion({
 
 function TransactionsCard({
   transactions,
+  setView,
 }: {
   transactions: DashboardResponse["recent_transactions"]
+  setView: (view: View) => void
 }) {
   return (
     <div className="rounded-2xl border border-[#cddfdd] bg-white shadow-sm">
@@ -846,7 +927,9 @@ function TransactionsCard({
           </h2>
         </div>
 
-        <button className="text-xs font-bold text-[#16706e]">
+        <button
+        onClick={() => setView("sales-history")} 
+        className="text-xs font-bold text-[#16706e]">
           View all →
         </button>
       </div>
@@ -1052,7 +1135,65 @@ function StockPage({
 }) {
   const [products, setProducts] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
+const [showAddProduct, setShowAddProduct] = useState(false)
 
+const [newProduct, setNewProduct] = useState({
+  product_id: "",
+  name: "",
+  current_stock: "",
+  average_daily_sales: "",
+  purchase_price: "",
+  supplier_lead_time_days: "",
+})
+
+async function handleAddProduct() {
+  try {
+    const token = localStorage.getItem("hisabai-token")
+
+    const response = await fetch("http://127.0.0.1:8000/products/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        product_id: Number(newProduct.product_id),
+        name: newProduct.name,
+        current_stock: Number(newProduct.current_stock),
+        average_daily_sales: Number(newProduct.average_daily_sales),
+        purchase_price: Number(newProduct.purchase_price),
+        supplier_lead_time_days: Number(
+          newProduct.supplier_lead_time_days
+        ),
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      alert(error.detail?.[0]?.msg || "Could not add product")
+      return
+    }
+
+    const created = await response.json()
+
+    setProducts((prev) => [...prev, created])
+    setShowAddProduct(false)
+
+    setNewProduct({
+      product_id: "",
+      name: "",
+      current_stock: "",
+      average_daily_sales: "",
+      purchase_price: "",
+      supplier_lead_time_days: "",
+    })
+
+    alert("Product added successfully! 🎉")
+  } catch (error) {
+    console.error(error)
+    alert("Something went wrong while adding the product.")
+  }
+}
   useEffect(() => {
     async function loadProducts() {
       setLoadingProducts(true)
@@ -1100,11 +1241,18 @@ function StockPage({
   }
 
   return (
+    
     <PageTitle
-      eyebrow="Inventory"
-      title="Know what's on your shelf."
-      description="Your live inventory, connected to sales movement."
-    >
+  eyebrow="Inventory"
+  title="Know what's on your shelf."
+  description="Your live inventory, connected to sales movement."
+>
+  <button
+    onClick={() => setShowAddProduct(true)}
+    className="mb-5 rounded-xl bg-[#ef684b] px-5 py-3 text-sm font-bold text-white shadow-sm hover:bg-[#dc5a40]"
+  >
+    + Add Product
+  </button>
       {/* INVENTORY SUMMARY */}
       <div className="mb-5 grid gap-4 sm:grid-cols-3">
 
@@ -1260,6 +1408,79 @@ function StockPage({
         })}
 
       </div>
+      {showAddProduct && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-widest text-[#ef684b]">
+            Inventory
+          </p>
+
+          <h2 className="font-serif text-2xl font-black text-[#123b3b]">
+            Add New Product
+          </h2>
+        </div>
+
+        <button
+          onClick={() => setShowAddProduct(false)}
+          className="text-xl text-[#71817e]"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="grid gap-4">
+
+        {[
+          ["product_id", "Product ID", "201"],
+          ["name", "Product Name", "Tea"],
+          ["current_stock", "Current Stock", "30"],
+          ["average_daily_sales", "Average Daily Sales", "5"],
+          ["purchase_price", "Purchase Price (₹)", "100"],
+          ["supplier_lead_time_days", "Supplier Lead Time (days)", "2"],
+        ].map(([key, label, placeholder]) => (
+          <div key={key}>
+            <label className="mb-1 block text-sm font-bold text-[#355858]">
+              {label}
+            </label>
+
+            <input
+              value={newProduct[key as keyof typeof newProduct]}
+              onChange={(e) =>
+                setNewProduct({
+                  ...newProduct,
+                  [key]: e.target.value,
+                })
+              }
+              placeholder={placeholder}
+              className="w-full rounded-xl border border-[#cfe0dd] px-4 py-3 outline-none focus:border-[#16706e]"
+            />
+          </div>
+        ))}
+
+      </div>
+
+      <div className="mt-6 flex gap-3">
+        <button
+          onClick={() => setShowAddProduct(false)}
+          className="flex-1 rounded-xl border border-[#cfe0dd] px-4 py-3 font-bold text-[#355858]"
+        >
+          Cancel
+        </button>
+
+        <button
+          onClick={handleAddProduct}
+          className="flex-1 rounded-xl bg-[#ef684b] px-4 py-3 font-bold text-white"
+        >
+          Add Product
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
     </PageTitle>
   )
 }
@@ -3831,76 +4052,6 @@ function BillScannerPage() {
         </div>
       )}
     </div>
-  )
-}
-
-/* =========================================================
-   COMING SOON
-========================================================= */
-
-function ComingSoonPage({
-  type,
-}: {
-  type: "bill" | "voice" | "scan" | "profit" | "ask"
-}) {
-  const content = {
-    bill: {
-      eyebrow: "New Bill",
-      title: "Record a sale.",
-      text: "The billing flow will connect products, payments, stock and customer credit.",
-      icon: "🧾",
-    },
-    voice: {
-      eyebrow: "Voice Entry",
-      title: "Speak your hisab.",
-      text: "Voice-based bookkeeping will turn Hindi and Hinglish voice entries into structured business records.",
-      icon: "🎙️",
-    },
-    scan: {
-      eyebrow: "Scan Bill",
-      title: "Turn a supplier bill into data.",
-      text: "The Smart Bill Scanner will extract products, quantities and prices for your review.",
-      icon: "📷",
-    },
-    profit: {
-      eyebrow: "Profit Watch",
-      title: "Find where money is leaking.",
-      text: "Profit Leakage Detector will surface unusual expenses, changing margins and low-profit products.",
-      icon: "📉",
-    },
-    ask: {
-      eyebrow: "Ask HisabAI",
-      title: "Ask your shop anything.",
-      text: "This will become the conversational layer for business questions using your actual shop data.",
-      icon: "✦",
-    },
-  }
-
-  const item = content[type]
-
-  return (
-    <PageTitle
-      eyebrow={item.eyebrow}
-      title={item.title}
-      description={item.text}
-    >
-      <div className="flex min-h-[360px] flex-col items-center justify-center rounded-3xl border border-[#cddfdd] bg-white p-10 text-center shadow-sm">
-
-        <div className="text-7xl">
-          {item.icon}
-        </div>
-
-        <p className="mt-6 rounded-full bg-[#f2edff] px-4 py-2 text-xs font-bold uppercase tracking-[0.1em] text-[#6d52c5]">
-          Building next
-        </p>
-
-        <p className="mt-4 max-w-lg text-sm leading-6 text-[#687a76]">
-          This area is part of the promised HisabAI workflow. We are building
-          it on top of the same real shop data instead of creating disconnected
-          demo screens.
-        </p>
-      </div>
-    </PageTitle>
   )
 }
 
