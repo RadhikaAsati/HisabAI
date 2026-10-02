@@ -146,5 +146,91 @@ Rules:
             response.text
         )
 
+    def answer_business_question(
+        self,
+        question: str,
+        shop_name: str,
+        available_cash: float,
+        today_sales: float,
+        outstanding_credit: float,
+        products: list[dict],
+        recent_transactions: list[dict],
+    ) -> str:
+        product_lines = "\n".join(
+            [
+                (
+                    f"- {product['name']}: "
+                    f"stock={product['current_stock']}, "
+                    f"avg_daily_sales={product['average_daily_sales']}, "
+                    f"days_of_stock={product['days_of_stock']}"
+                )
+                for product in products
+            ]
+        )
 
+        transaction_lines = "\n".join(
+            [
+                (
+                    f"- {transaction['product_name']}: "
+                    f"{transaction['quantity']} units, "
+                    f"₹{transaction['total_amount']}, "
+                    f"{transaction['payment_mode']}"
+                )
+                for transaction in recent_transactions
+            ]
+        )
+
+        prompt = f"""
+You are HisabAI, a business assistant for a small Indian shop.
+
+Answer the shopkeeper's question using ONLY the shop data provided below.
+
+IMPORTANT RULES:
+- Do not invent financial figures.
+- Do not invent products, sales, stock, prices, customers, or transactions.
+- Do not claim an action was performed.
+- If the available data is insufficient to answer, clearly say so.
+- Use simple language suitable for a small shopkeeper.
+- The shopkeeper may ask in Hindi, Hinglish, or English.
+- Reply in the same language style as the question.
+- Use ₹ for Indian currency.
+- You may explain trends or observations from the provided data.
+- Do not perform unrestricted database queries.
+- Do not provide financial advice beyond the supplied shop data.
+
+SHOP:
+Shop name: {shop_name}
+
+CURRENT SHOP DATA:
+Available cash: ₹{available_cash}
+Today's sales: ₹{today_sales}
+Outstanding udhaar: ₹{outstanding_credit}
+
+PRODUCTS:
+{product_lines or "No product data available."}
+
+RECENT TRANSACTIONS:
+{transaction_lines or "No recent transaction data available."}
+
+SHOPKEEPER QUESTION:
+{question}
+
+Give a concise, practical answer.
+"""
+
+        for attempt in range(3):
+            try:
+                response = self.client.models.generate_content(
+                    model="gemini-3.5-flash-lite",
+                    contents=prompt,
+                )
+
+                return response.text.strip()
+
+            except errors.ServerError as error:
+                if error.code == 503 and attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+
+                raise
 ai_service = AIService()

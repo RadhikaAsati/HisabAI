@@ -1,17 +1,27 @@
 from fastapi import APIRouter, Depends, HTTPException,File, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_shop
 from app.db.database import get_db
-from app.models.product import ProductDB
-from app.models.shop import ShopDB
 from app.schemas.ai import (
-     BillConfirmation,
-     BillExtraction,
+    AIAskRequest,
+    AIAskResponse,
+    BillConfirmation,
+    BillExtraction,
     TransactionExtraction,
     VoiceSaleConfirmation,
 )
+from datetime import datetime, timedelta, timezone
+from app.models.product import ProductDB
+from app.models.shop import ShopDB
+from app.models.shop_finance import ShopFinanceDB
+from app.models.sale import SaleDB
+from app.models.credit import CreditDB
+from app.models.credit_payment import CreditPaymentDB
+from app.models.customer import CustomerDB
+
 from app.schemas.billing import BillingCreate, BillingItem
 from app.services.ai_service import ai_service
 from app.services.billing_service import create_billing_transaction
@@ -286,3 +296,333 @@ def confirm_scanned_bill(
             status_code=500,
             detail="Could not confirm scanned bill.",
         )
+
+@router.post("/ask", response_model=AIAskResponse)
+def ask_hisabai(
+    request: AIAskRequest,
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
+    question = request.question.strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty.",
+        )
+
+    shop_id = current_shop.shop_id
+
+    # =========================================================
+    # 1. AVAILABLE CASH
+    # =========================================================
+
+    finance = (
+        db.query(ShopFinanceDB)
+        .filter(
+            ShopFinanceDB.shop_id == shop_id
+        )
+        .first()
+    )
+
+    available_cash = (
+        float(finance.available_cash)
+        if finance
+        else 0.0
+    )
+
+    # =========================================================
+    # 2. TODAY'S SALES
+    # =========================================================
+
+    now = datetime.now(timezone.utc)
+
+    start_of_today = now.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    start_of_tomorrow = (
+        start_of_today + timedelta(days=1)
+    )
+
+    today_sales = (
+        db.query(
+            func.coalesce(
+                func.sum(SaleDB.total_amount),
+                0,
+            )
+        )
+        .join(
+            ProductDB,
+            ProductDB.product_id == SaleDB.product_id,
+        )
+        .filter(
+            ProductDB.shop_id == shop_id,
+            SaleDB.created_at >= start_of_today,
+            SaleDB.created_at < start_of_tomorrow,
+        )
+        .scalar()
+    )
+
+    today_sales = float(today_sales or 0)
+
+    # =========================================================
+    # 3. OUTSTANDING UDHAAR
+    # =========================================================
+
+    total_credit = (
+        db.query(
+            func.coalesce(
+                func.sum(CreditDB.amount),
+                0,
+            )
+        )
+        .join(
+            CustomerDB,
+            CustomerDB.customer_id == CreditDB.customer_id,
+        )
+        .filter(
+            CustomerDB.shop_id == shop_id
+        )
+        .scalar()
+    )
+
+    total_credit_payments = (
+        db.query(
+            func.coalesce(
+                func.sum(CreditPaymentDB.amount),
+                0,
+            )
+        )
+        .join(
+            CreditDB,
+            CreditDB.credit_id == CreditPaymentDB.credit_id,
+        )
+        .join(
+            CustomerDB,
+            CustomerDB.customer_id == CreditDB.customer_id,
+        )
+        .filter(
+            CustomerDB.shop_id == shop_id
+        )
+        .scalar()
+    )
+
+    outstanding_credit = max(
+        float(total_credit or 0)
+        - float(total_credit_payments or 0),
+        0.0,
+    )
+
+    # =========================================================
+    # 4. PRODUCT / INVENTORY DATA
+    # =========================================================
+
+    products = (
+        db.query(ProductDB)
+        .filter(
+            ProductDB.shop_id == shop_id
+        )
+        .all()
+    )
+
+    product_context = []
+
+    for product in products:
+        current_stock = float(
+            product.current_stock or 0
+        )
+
+        average_daily_sales = float(
+            product.average_daily_sales or 0
+        )
+
+        if average_daily_sales > 0:
+            days_of_stock = (
+                current_stock
+                / average_daily_sales
+            )
+        else:
+            days_of_stock = None
+
+        product_context.append(
+            {
+                "name": product.name,
+                "current_stock": current_stock,
+                "average_daily_sales": average_daily_sales,
+                "days_of_stock": (
+                    round(days_of_stock, 1)
+                    if days_of_stock is not None
+                    else None
+                ),
+            }
+        )
+
+    # =========================================================
+    # 5. RECENT TRANSACTIONS
+    # =========================================================
+
+    recent_sales = (
+        db.query(
+            SaleDB,
+            ProductDB,
+        )
+        .join(
+            ProductDB,
+            ProductDB.product_id == SaleDB.product_id,
+        )
+        .filter(
+            ProductDB.shop_id == shop_id
+        )
+        .order_by(
+            SaleDB.created_at.desc()
+        )
+        .limit(5)
+        .all()
+    )
+
+    recent_transactions = []
+
+    for sale, product in recent_sales:
+        recent_transactions.append(
+            {
+                "product_name": product.name,
+                "quantity": sale.quantity,
+                "total_amount": float(
+                    sale.total_amount
+                ),
+                "payment_mode": sale.payment_mode,
+            }
+        )
+
+    # =========================================================
+    # 6. ASK GEMINI
+    # =========================================================
+
+    try:
+        answer = ai_service.answer_business_question(
+            question=question,
+            shop_name=current_shop.name,
+            available_cash=available_cash,
+            today_sales=today_sales,
+            outstanding_credit=outstanding_credit,
+            products=product_context,
+            recent_transactions=recent_transactions,
+        )
+
+        return AIAskResponse(answer=answer)
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="HisabAI could not answer the question right now.",
+        )
+
+# -----------------------------------------
+# GET /ai/profit-watch
+# Profit and margin analysis from real sales
+# -----------------------------------------
+@router.get("/profit-watch")
+def profit_watch(
+    current_shop: ShopDB = Depends(get_current_shop),
+    db: Session = Depends(get_db),
+):
+    shop_id = current_shop.shop_id
+
+    # Get sales joined with products belonging to this shop
+    sales_data = (
+        db.query(
+            ProductDB.product_id,
+            ProductDB.name,
+            ProductDB.purchase_price,
+            func.sum(SaleDB.quantity).label("quantity_sold"),
+            func.sum(SaleDB.total_amount).label("sales_revenue"),
+        )
+        .join(
+            SaleDB,
+            SaleDB.product_id == ProductDB.product_id,
+        )
+        .filter(
+            ProductDB.shop_id == shop_id,
+        )
+        .group_by(
+            ProductDB.product_id,
+            ProductDB.name,
+            ProductDB.purchase_price,
+        )
+        .all()
+    )
+
+    product_results = []
+
+    total_sales = 0.0
+    total_cost = 0.0
+    total_profit = 0.0
+
+    for row in sales_data:
+        quantity_sold = float(row.quantity_sold or 0)
+        sales_revenue = float(row.sales_revenue or 0)
+        purchase_price = float(row.purchase_price or 0)
+
+        cost = quantity_sold * purchase_price
+        gross_profit = sales_revenue - cost
+
+        if sales_revenue > 0:
+            margin_percentage = (
+                gross_profit / sales_revenue
+            ) * 100
+        else:
+            margin_percentage = 0.0
+
+        if margin_percentage < 15:
+            status = "WATCH"
+        else:
+            status = "HEALTHY"
+
+        product_results.append(
+            {
+                "product_id": row.product_id,
+                "product_name": row.name,
+                "quantity_sold": quantity_sold,
+                "sales_revenue": round(sales_revenue, 2),
+                "cost": round(cost, 2),
+                "gross_profit": round(gross_profit, 2),
+                "margin_percentage": round(margin_percentage, 2),
+                "status": status,
+            }
+        )
+
+        total_sales += sales_revenue
+        total_cost += cost
+        total_profit += gross_profit
+
+    if total_sales > 0:
+        overall_margin = (
+            total_profit / total_sales
+        ) * 100
+    else:
+        overall_margin = 0.0
+
+    # Highest-priority products first:
+    # WATCH products before HEALTHY products,
+    # then lowest margin first.
+    product_results.sort(
+        key=lambda item: (
+            item["status"] != "WATCH",
+            item["margin_percentage"],
+        )
+    )
+
+    return {
+        "shop_name": current_shop.name,
+        "summary": {
+            "total_sales": round(total_sales, 2),
+            "total_cost": round(total_cost, 2),
+            "gross_profit": round(total_profit, 2),
+            "overall_margin_percentage": round(overall_margin, 2),
+        },
+        "products": product_results,
+    }

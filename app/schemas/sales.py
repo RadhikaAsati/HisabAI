@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Literal
+from datetime import datetime
 
 
 class SaleCreate(BaseModel):
@@ -12,7 +13,9 @@ class SaleCreate(BaseModel):
 class SaleResponse(BaseModel):
     sale_id: int
     product_id: int
+    product_name: str
     quantity: int
     unit_selling_price: float
     total_amount: float
     payment_mode: Literal["CASH", "UPI", "CREDIT"]
+    created_at: datetime

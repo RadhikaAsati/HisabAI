@@ -61,3 +61,10 @@ class BillConfirmation(BaseModel):
             raise ValueError("At least one bill item is required.")
 
         return self
+
+class AIAskRequest(BaseModel):
+    question: str
+
+
+class AIAskResponse(BaseModel):
+    answer: str

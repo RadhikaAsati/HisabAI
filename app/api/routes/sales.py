@@ -77,10 +77,12 @@ def record_sale(
     return {
         "sale_id": new_sale.sale_id,
         "product_id": new_sale.product_id,
+        "product_name": product.name,
         "quantity": new_sale.quantity,
         "unit_selling_price": new_sale.unit_selling_price,
         "total_amount": new_sale.total_amount,
         "payment_mode": new_sale.payment_mode,
+        "created_at": new_sale.created_at,
     }
 
 
@@ -93,7 +95,7 @@ def get_sales(
     db: Session = Depends(get_db),
 ):
     sales = (
-        db.query(SaleDB)
+        db.query(SaleDB, ProductDB.name.label("product_name"))
         .join(
             ProductDB,
             SaleDB.product_id == ProductDB.product_id,
@@ -109,12 +111,14 @@ def get_sales(
         {
             "sale_id": sale.sale_id,
             "product_id": sale.product_id,
+            "product_name": product_name,
             "quantity": sale.quantity,
             "unit_selling_price": sale.unit_selling_price,
             "total_amount": sale.total_amount,
             "payment_mode": sale.payment_mode,
+            "created_at": sale.created_at,
         }
-        for sale in sales
+        for sale, product_name in sales
     ]
 
 
